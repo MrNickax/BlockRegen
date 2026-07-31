@@ -28,8 +28,10 @@ import java.util.stream.Collectors;
 public class OraxenProvider extends CompatibilityProvider implements ItemProvider, MaterialProvider {
 
     public OraxenProvider(BlockRegenPlugin plugin) {
-        super(plugin, "oraxen");
-        setFeatures(ProviderFeatureFlag.MATERIALS, ProviderFeatureFlag.DROPS, ProviderFeatureFlag.CONDITIONS);
+        super(plugin,
+                new String[]{"oraxen"},
+                new ProviderFeatureFlag[]{ProviderFeatureFlag.MATERIALS, ProviderFeatureFlag.DROPS, ProviderFeatureFlag.CONDITIONS}
+        );
     }
 
     @Override

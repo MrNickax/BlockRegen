@@ -26,8 +26,10 @@ import java.util.stream.Collectors;
 public class MythicMobsProvider extends CompatibilityProvider implements ItemProvider {
 
     public MythicMobsProvider(BlockRegenPlugin plugin) {
-        super(plugin, "mythic");
-        setFeatures(ProviderFeatureFlag.DROPS);
+        super(plugin,
+                new String[]{"mythic"},
+                new ProviderFeatureFlag[]{ProviderFeatureFlag.DROPS}
+        );
     }
 
     @Override

@@ -5,6 +5,7 @@ import lombok.extern.java.Log;
 import nl.aurorion.blockregen.BlockRegenPlugin;
 import org.jetbrains.annotations.NotNull;
 
+import java.security.Provider;
 import java.util.Arrays;
 import java.util.stream.Collectors;
 
@@ -14,7 +15,7 @@ public abstract class CompatibilityProvider {
     protected final BlockRegenPlugin plugin;
 
     @Getter
-    private ProviderFeatureFlag[] features;
+    private final ProviderFeatureFlag[] features;
 
     @Getter
     private final String[] prefixes;
@@ -22,14 +23,12 @@ public abstract class CompatibilityProvider {
     public CompatibilityProvider(BlockRegenPlugin plugin) {
         this.plugin = plugin;
         this.prefixes = new String[0];
+        this.features = new ProviderFeatureFlag[0];
     }
 
-    public CompatibilityProvider(BlockRegenPlugin plugin, String... prefixes) {
+    public CompatibilityProvider(BlockRegenPlugin plugin, String[] prefixes, ProviderFeatureFlag[] features) {
         this.plugin = plugin;
         this.prefixes = prefixes;
-    }
-
-    public void setFeatures(@NotNull ProviderFeatureFlag... features) {
         this.features = features;
     }
 
@@ -37,6 +36,7 @@ public abstract class CompatibilityProvider {
         //
     }
 
+    @NotNull
     public String getJoinedFlags() {
         return Arrays.stream(getFeatures()).map(ProviderFeatureFlag::getName).collect(Collectors.joining("&7, &a"));
     }

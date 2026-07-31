@@ -36,8 +36,10 @@ public class MMOItemsProvider extends CompatibilityProvider implements ItemProvi
     private static final Pattern ITEM_PATTERN = Pattern.compile("(\\S+):(\\S+)");
 
     public MMOItemsProvider(BlockRegenPlugin plugin) {
-        super(plugin, "mmoitems");
-        setFeatures(ProviderFeatureFlag.CONDITIONS, ProviderFeatureFlag.MATERIALS, ProviderFeatureFlag.DROPS);
+        super(plugin,
+                new String[]{"mmoitems"},
+                new ProviderFeatureFlag[]{ProviderFeatureFlag.CONDITIONS, ProviderFeatureFlag.MATERIALS, ProviderFeatureFlag.DROPS}
+        );
     }
 
     @Override

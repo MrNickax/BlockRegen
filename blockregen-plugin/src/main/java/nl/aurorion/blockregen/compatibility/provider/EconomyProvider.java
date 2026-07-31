@@ -16,8 +16,7 @@ public class EconomyProvider extends CompatibilityProvider {
     private Economy economy;
 
     public EconomyProvider(BlockRegenPlugin plugin) {
-        super(plugin);
-        setFeatures(ProviderFeatureFlag.REWARDS);
+        super(plugin, new String[0], new ProviderFeatureFlag[]{ProviderFeatureFlag.REWARDS});
     }
 
     public void depositPlayer(OfflinePlayer player, double money) {

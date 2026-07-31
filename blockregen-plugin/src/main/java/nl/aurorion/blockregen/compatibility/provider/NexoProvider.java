@@ -22,8 +22,10 @@ import java.lang.reflect.Type;
 public class NexoProvider extends CompatibilityProvider implements MaterialProvider {
 
     public NexoProvider(BlockRegenPlugin plugin) {
-        super(plugin, "nexo");
-        setFeatures(ProviderFeatureFlag.CONDITIONS, ProviderFeatureFlag.MATERIALS);
+        super(plugin,
+                new String[]{"nexo"},
+                new ProviderFeatureFlag[]{ProviderFeatureFlag.CONDITIONS, ProviderFeatureFlag.MATERIALS}
+        );
     }
 
     @Override

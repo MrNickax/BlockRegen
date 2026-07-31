@@ -23,8 +23,10 @@ public class JobsProvider extends CompatibilityProvider {
     public static final ContextKey JOBS_PLAYER_KEY = BaseContextKey.of("jobs.player");
 
     public JobsProvider(BlockRegenPlugin plugin) {
-        super(plugin, "jobs");
-        setFeatures(ProviderFeatureFlag.CONDITIONS, ProviderFeatureFlag.REWARDS);
+        super(plugin,
+                new String[]{"jobs"},
+                new ProviderFeatureFlag[]{ProviderFeatureFlag.CONDITIONS, ProviderFeatureFlag.REWARDS}
+        );
     }
 
     @Override

@@ -34,8 +34,10 @@ import java.lang.reflect.Type;
 public class CraftEngineProvider extends CompatibilityProvider implements ItemProvider, MaterialProvider {
 
     public CraftEngineProvider(BlockRegenPlugin plugin) {
-        super(plugin, "ce", "craftengine");
-        setFeatures(ProviderFeatureFlag.MATERIALS, ProviderFeatureFlag.DROPS);
+        super(plugin,
+                new String[]{"ce", "craftengine"},
+                new ProviderFeatureFlag[]{ProviderFeatureFlag.MATERIALS, ProviderFeatureFlag.DROPS}
+        );
     }
 
     @Override

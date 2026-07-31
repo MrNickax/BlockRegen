@@ -28,8 +28,10 @@ import java.util.stream.Collectors;
 @Log
 public class ItemsAdderProvider extends CompatibilityProvider implements ItemProvider, MaterialProvider {
     public ItemsAdderProvider(BlockRegenPlugin plugin) {
-        super(plugin, "ia");
-        setFeatures(ProviderFeatureFlag.CONDITIONS, ProviderFeatureFlag.DROPS, ProviderFeatureFlag.MATERIALS);
+        super(plugin,
+                new String[]{"ia", "itemsadder"},
+                new ProviderFeatureFlag[]{ProviderFeatureFlag.CONDITIONS, ProviderFeatureFlag.DROPS, ProviderFeatureFlag.MATERIALS}
+        );
     }
 
     @Override

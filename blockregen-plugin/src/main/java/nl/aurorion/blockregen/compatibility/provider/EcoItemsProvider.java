@@ -21,8 +21,10 @@ import java.util.stream.Collectors;
 public class EcoItemsProvider extends CompatibilityProvider implements ItemProvider {
 
     public EcoItemsProvider(BlockRegenPlugin plugin) {
-        super(plugin, "eco", "ecoitems");
-        setFeatures(ProviderFeatureFlag.DROPS);
+        super(plugin,
+                new String[]{"eco", "ecoitems"},
+                new ProviderFeatureFlag[]{ProviderFeatureFlag.DROPS}
+        );
     }
 
     @Override
