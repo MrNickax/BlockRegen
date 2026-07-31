@@ -132,52 +132,7 @@ public enum Message {
         this.value = value;
     }
 
-    public String getRawPrefixed() {
-        return insertPrefix ? "%prefix%" + this.value : this.value;
-    }
-
-    public boolean isEmpty() {
-        return this.value == null || this.value.isEmpty();
-    }
-
-    public @Nullable String get() {
-        return this.isEmpty() ? null : Colors.color(Text.parse(this.getRawPrefixed()));
-    }
-
-    public @NotNull Optional<String> optional() {
-        return Optional.ofNullable(this.get());
-    }
-
-    public @NotNull Optional<String> optional(@NotNull Player player) {
-        return Optional.ofNullable(this.get(player));
-    }
-
-    public void mapAndSend(@NotNull CommandSender sender, @NotNull Function<String, String> mapper) {
-        this.optional().map(mapper).ifPresent(s -> sender.sendMessage(Colors.color(s)));
-    }
-
-    public void mapAndSend(@NotNull Player player, @NotNull Function<String, String> mapper) {
-        this.optional(player).map(mapper).ifPresent(s -> player.sendMessage(Colors.color(s)));
-    }
-
-    public @Nullable String get(@NotNull Player player) {
-        return this.isEmpty() ? null : Colors.color(Text.parse(getRawPrefixed(), player));
-    }
-
-    public @Nullable String get(@NotNull CommandSender sender) {
-        if (sender instanceof Player) {
-            return get((Player) sender);
-        }
-        return this.isEmpty() ? null : Colors.color(Text.parse(getRawPrefixed()));
-    }
-
-    public void send(@NotNull CommandSender target) {
-        String message = this.get(target);
-        if (message != null) {
-            target.sendMessage(message);
-        }
-    }
-
+    // Load and fill messages from/to Messages.yml
     public static void load() {
         FileConfiguration messageSection = BlockRegenPluginImpl.getInstance().getFiles().getMessages().getFileConfiguration();
 
@@ -205,6 +160,56 @@ public enum Message {
 
         if (shouldSave) {
             BlockRegenPluginImpl.getInstance().getFiles().getMessages().save();
+        }
+    }
+
+    public String getRawPrefixed() {
+        return insertPrefix ? "%prefix%" + this.value : this.value;
+    }
+
+    public boolean isEmpty() {
+        return this.value == null || this.value.isEmpty();
+    }
+
+    public @Nullable String get() {
+        return this.isEmpty() ? null : Colors.color(Text.parse(this.getRawPrefixed()));
+    }
+
+    public @Nullable String get(@NotNull Player player) {
+        return this.isEmpty() ? null : Colors.color(Text.parse(getRawPrefixed(), player));
+    }
+
+    public @Nullable String get(@NotNull CommandSender sender) {
+        if (sender instanceof Player) {
+            return get((Player) sender);
+        }
+        return this.isEmpty() ? null : Colors.color(Text.parse(getRawPrefixed()));
+    }
+
+    public @NotNull Optional<String> optional() {
+        return Optional.ofNullable(this.get());
+    }
+
+    public @NotNull Optional<String> optional(@NotNull Player player) {
+        return Optional.ofNullable(this.get(player));
+    }
+
+    public @NotNull Optional<String> optional(@NotNull CommandSender sender) {
+        return Optional.ofNullable(this.get(sender));
+    }
+
+    public void mapAndSend(@NotNull CommandSender sender, @NotNull Function<String, String> mapper) {
+        this.optional().map(mapper).ifPresent(s -> sender.sendMessage(Colors.color(s)));
+    }
+
+    public void mapAndSend(@NotNull Player player, @NotNull Function<String, String> mapper) {
+        this.optional(player).map(mapper).ifPresent(s -> player.sendMessage(Colors.color(s)));
+    }
+
+    public void send(@NotNull CommandSender target) {
+        String message = this.get(target);
+        if (message != null) {
+            target.sendMessage(message);
         }
     }
 }

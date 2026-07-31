@@ -5,7 +5,6 @@ import lombok.extern.java.Log;
 import nl.aurorion.blockregen.BlockRegenPlugin;
 import org.jetbrains.annotations.NotNull;
 
-import java.security.Provider;
 import java.util.Arrays;
 import java.util.stream.Collectors;
 
@@ -15,6 +14,7 @@ public abstract class CompatibilityProvider {
     protected final BlockRegenPlugin plugin;
 
     @Getter
+    @NotNull
     private final ProviderFeatureFlag[] features;
 
     @Getter

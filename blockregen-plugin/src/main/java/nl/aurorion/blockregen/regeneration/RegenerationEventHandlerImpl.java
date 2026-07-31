@@ -160,10 +160,13 @@ public class RegenerationEventHandlerImpl implements RegenerationEventHandler {
             if (!preset.getCondition().matches(ctx)) {
                 String message = preset.getConditionMessage();
                 if (message == null) {
-                    message = Message.CONDITIONS_NOT_MET.getRawPrefixed();
+                    message = Message.CONDITIONS_NOT_MET.isEmpty() ? null : Message.CONDITIONS_NOT_MET.getRawPrefixed();
                 }
-                player.sendMessage(Colors.color(Text.replace(Text.parse(message, block, player),
-                        "condition", preset.getCondition().pretty())));
+                if (message != null) {
+                    player.sendMessage(
+                            Colors.color(Text.replace(Text.parse(message, block, player), "condition", preset.getCondition().pretty()))
+                    );
+                }
                 eventControl.cancel();
                 log.fine(() -> "Player doesn't meet conditions.");
                 return;
