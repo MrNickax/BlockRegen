@@ -12,7 +12,9 @@ import nl.aurorion.blockregen.event.EventManager;
 import nl.aurorion.blockregen.listener.DebugListener;
 import nl.aurorion.blockregen.listener.PhysicsListener;
 import nl.aurorion.blockregen.listener.PlayerListener;
+import nl.aurorion.blockregen.listener.ProtectionListener;
 import nl.aurorion.blockregen.listener.RegenerationListener;
+import nl.aurorion.blockregen.listener.SpongeListener;
 import nl.aurorion.blockregen.material.BlockRegenMaterial;
 import nl.aurorion.blockregen.material.MaterialManager;
 import nl.aurorion.blockregen.material.MaterialProvider;
@@ -109,6 +111,9 @@ public class BlockRegenPluginImpl extends JavaPlugin implements Listener, BlockR
 
     @Getter
     private final PhysicsListener physicsListener = new PhysicsListener(this);
+
+    @Getter
+    private final ProtectionListener protectionListener = new ProtectionListener(this);
 
     @Getter
     private final DebugListener debugListener = new DebugListener(this);
@@ -249,6 +254,7 @@ public class BlockRegenPluginImpl extends JavaPlugin implements Listener, BlockR
         presetManager.initialLoad();
 
         physicsListener.load();
+        protectionListener.load();
 
         regionManager.reload();
 
@@ -301,6 +307,14 @@ public class BlockRegenPluginImpl extends JavaPlugin implements Listener, BlockR
             if (!getConfig().isSet("Disable-Physics") || getConfig().getBoolean("Disable-Physics", false)) {
                 log.warning("Option `Disable-Physics` has no effect on versions below 1.13.2.");
             }
+        }
+
+        protectionListener.load();
+        pluginManager.registerEvents(protectionListener, this);
+
+        // SpongeAbsorbEvent is only present on >1.13
+        if (BukkitVersions.isCurrentAbove("1.13", true)) {
+            pluginManager.registerEvents(new SpongeListener(protectionListener), this);
         }
 
         pluginManager.registerEvents(new PlayerListener(this), this);

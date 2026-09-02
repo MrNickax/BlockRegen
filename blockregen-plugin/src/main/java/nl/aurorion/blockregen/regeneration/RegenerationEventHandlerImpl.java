@@ -285,7 +285,8 @@ public class RegenerationEventHandlerImpl implements RegenerationEventHandler {
         return false;
     }
 
-    private boolean hasBypass(Player player) {
+    @Override
+    public boolean hasBypass(@NotNull Player player) {
         return plugin.getRegenerationManager().hasBypass(player)
                 || (plugin.getConfig().getBoolean("Bypass-In-Creative", false)
                 && player.getGameMode() == GameMode.CREATIVE);
