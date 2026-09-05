@@ -117,13 +117,23 @@ public class RegenerationManager {
 
     /**
      * Register the process as running.
+     * <p>
+     * The process that is running is always the one in the cache. When another process is already registered for the
+     * same block, it's stopped and replaced. Keeping the old one would leave the new (running) process outside of the
+     * cache - it wouldn't be saved on shutdown and its block would stay in the replace-block state forever.
      */
     public void registerProcess(@NotNull RegenerationProcess process) {
         Objects.requireNonNull(process);
 
-        if (this.getProcess(process.getBlock()) != null) {
-            log.fine(() -> String.format("Cache already contains process %s", process.getId()));
+        RegenerationProcess existing = this.getProcess(process.getBlock());
+
+        if (existing == process) {
             return;
+        }
+
+        if (existing != null) {
+            log.fine(() -> String.format("Replacing process %s with %s", existing.getId(), process.getId()));
+            existing.stop();
         }
 
         cache.put(process.getBlock(), process);
@@ -140,12 +150,19 @@ public class RegenerationManager {
         return process != null && process.getRegenerationTime() > System.currentTimeMillis();
     }
 
+    // Only removes the process when it's the one cached for its block.
+    // RegenerationProcess#equals compares locations, so removing by block alone would let a stale process evict the
+    // one that's actually running.
     public void removeProcess(RegenerationProcess process) {
-        if (cache.remove(process.getBlock()) != null) {
-            log.fine(() -> String.format("Removed process from cache: %s", process));
-        } else {
-            log.fine(() -> String.format("Process %s not found, not removed.", process));
+        Block block = process.getBlock();
+
+        if (cache.get(block) != process) {
+            log.fine(() -> String.format("Process %s is not the one cached, not removed.", process));
+            return;
         }
+
+        cache.remove(block);
+        log.fine(() -> String.format("Removed process from cache: %s", process));
     }
 
     public void removeProcess(@NotNull Block block) {
@@ -171,14 +188,21 @@ public class RegenerationManager {
 
     // Revert blocks before disabling
     public void revertAll() {
-        cache.values().forEach(RegenerationProcess::revertBlock);
+        cache.values().forEach(process -> {
+            // Stop the task, otherwise it could fire before the server is down and undo the revert.
+            process.stop();
+            process.revertBlock();
+        });
     }
 
-    // Can only be called from the main thread
+    // Regenerate processes that are past due and drop them from the cache.
+    // Leaving them cached would block the registration of any later process on the same block.
     private void purgeExpired() {
-        // Clear invalid processes
         for (RegenerationProcess process : cache.values()) {
             if (process.getTimeLeft() < 0 && process.shouldRegenerate()) {
+                process.stop();
+                removeProcess(process);
+
                 if (Bukkit.isPrimaryThread()) {
                     process.regenerateBlock();
                 } else {
@@ -209,7 +233,12 @@ public class RegenerationManager {
             return;
         }
 
-        cache.values().forEach(process -> process.setTimeLeft(process.getRegenerationTime() - System.currentTimeMillis()));
+        // Processes waiting for a manual regeneration keep their timeLeft, they have no regeneration time to derive it from.
+        cache.values().forEach(process -> {
+            if (process.shouldRegenerate()) {
+                process.setTimeLeft(process.getRegenerationTime() - System.currentTimeMillis());
+            }
+        });
 
         // TODO: Shouldn't be required
         purgeExpired();
@@ -233,6 +262,22 @@ public class RegenerationManager {
         return process.convertLocation() && process.convertPreset();
     }
 
+    // Start a process read from storage.
+    // Listeners are registered before the (async) load finishes, so a block might already have a process running.
+    // That one is newer than the stored snapshot and has to win.
+    private void startLoaded(@Nullable RegenerationProcess loadedProcess) {
+        if (loadedProcess == null || !convertProcess(loadedProcess)) {
+            return;
+        }
+
+        if (getProcess(loadedProcess.getBlock()) != null) {
+            log.fine(() -> "A process is already running at " + loadedProcess.getBlock() + ", skipping the stored one.");
+            return;
+        }
+
+        loadedProcess.start();
+    }
+
     private CompletableFuture<List<RegenerationProcess>> loadFromStorage() {
         return plugin.getGsonHelper().loadListAsync(plugin.getDataFolder().getPath() + "/Data.json", RegenerationProcess.class);
     }
@@ -240,8 +285,6 @@ public class RegenerationManager {
     public void load() {
         loadFromStorage().thenAcceptAsync(loadedProcesses ->
                 Bukkit.getScheduler().runTask(plugin, () -> {
-                    cache.clear();
-
                     if (loadedProcesses == null) {
                         return;
                     }
@@ -251,9 +294,7 @@ public class RegenerationManager {
                     } else {
                         // Start em
                         for (RegenerationProcess loadedProcess : loadedProcesses) {
-                            if (loadedProcess != null && convertProcess(loadedProcess)) {
-                                loadedProcess.start();
-                            }
+                            startLoaded(loadedProcess);
                         }
                         log.info("Loaded " + this.cache.size() + " regeneration process(es)...");
                     }
@@ -271,19 +312,17 @@ public class RegenerationManager {
         this.retry = false;
 
         loadFromStorage().thenAcceptAsync(loadedProcesses -> {
-            cache.clear();
-
             if (loadedProcesses == null) {
                 throw new RuntimeException("Could not load processes from storage.");
             }
 
-            // We can throw away processes that are not valid. Should do no harm.
-            for (RegenerationProcess loadedProcess : loadedProcesses) {
-                if (loadedProcess != null && convertProcess(loadedProcess)) {
-                    loadedProcess.start();
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                // We can throw away processes that are not valid. Should do no harm.
+                for (RegenerationProcess loadedProcess : loadedProcesses) {
+                    startLoaded(loadedProcess);
                 }
-            }
-            log.info("Loaded " + this.cache.size() + " regeneration process(es)...");
+                log.info("Loaded " + this.cache.size() + " regeneration process(es)...");
+            });
         }).exceptionally(e -> {
             log.log(Level.SEVERE, "Could not load processes: " + e.getMessage(), e);
             return null;

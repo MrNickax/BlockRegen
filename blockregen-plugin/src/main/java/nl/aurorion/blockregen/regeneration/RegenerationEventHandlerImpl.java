@@ -48,8 +48,11 @@ public class RegenerationEventHandlerImpl implements RegenerationEventHandler {
         // Check if the block is regenerating already
         RegenerationProcess existingProcess = plugin.getRegenerationManager().getProcess(block);
         if (existingProcess != null) {
-            // Remove the process
+            // Cancel the process
             if (hasBypass(player)) {
+                // Stop the task too, otherwise it regenerates the block later on and evicts whatever process is
+                // registered at that point.
+                existingProcess.stop();
                 plugin.getRegenerationManager().removeProcess(existingProcess);
                 log.fine(() -> "Removed process in bypass.");
                 return;
