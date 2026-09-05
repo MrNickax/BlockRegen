@@ -92,10 +92,6 @@ public class RegenerationProcess {
 
         BlockRegenPlugin plugin = BlockRegenPluginImpl.getInstance();
 
-        // Register that the process is actually running now
-        // #start() can be called even on a process already in cache due to #contains() checks (which use #equals()) in RegenerationManager.
-        plugin.getRegenerationManager().registerProcess(this);
-
         if (shouldRegenerate()) {
             // If timeLeft is -1, generate a new one from preset regen delay.
             if (timeLeft == -1) {
@@ -104,7 +100,14 @@ public class RegenerationProcess {
             }
 
             this.regenerationTime = System.currentTimeMillis() + timeLeft;
+        }
 
+        // Register that the process is actually running now.
+        // Has to happen after the regeneration time is known. The auto-save runs off the main thread and would see a
+        // process with regenerationTime = 0 as expired and regenerate it right away.
+        plugin.getRegenerationManager().registerProcess(this);
+
+        if (shouldRegenerate()) {
             // No need to start a task when it's time to regenerate already.
             if (timeLeft == 0 || regenerationTime <= System.currentTimeMillis()) {
                 Bukkit.getScheduler().runTask(plugin, this::regenerate);
