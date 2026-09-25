@@ -17,13 +17,18 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBurnEvent;
 import org.bukkit.event.block.BlockExplodeEvent;
 import org.bukkit.event.block.BlockFadeEvent;
+import org.bukkit.event.block.BlockFormEvent;
 import org.bukkit.event.block.BlockFromToEvent;
+import org.bukkit.event.block.BlockGrowEvent;
 import org.bukkit.event.block.BlockPistonExtendEvent;
 import org.bukkit.event.block.BlockPistonRetractEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.block.BlockSpreadEvent;
 import org.bukkit.event.block.LeavesDecayEvent;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.EntityInteractEvent;
+import org.bukkit.event.world.StructureGrowEvent;
 import org.bukkit.projectiles.ProjectileSource;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -37,6 +42,10 @@ import java.util.List;
  * regeneration event handler, so blocks could still be destroyed with Disable-Other-Break turned on.
  * <p>
  * Blocks removed this way are only protected, never regenerated. There is no player to hand the rewards to.
+ * <p>
+ * Regenerating blocks are also kept the way the process left them. A replace-block that grows or gets built over
+ * (carrots[age=0] ripening, seeds planted on the bare farmland,...) looks like it can be harvested, but the break is
+ * refused until the process regenerates it.
  */
 @Log
 public class ProtectionListener implements Listener {
@@ -161,6 +170,63 @@ public class ProtectionListener implements Listener {
         }
     }
 
+    // The events below only guard regenerating blocks, whatever Disable-Other-Break says.
+    // Crops and grass outside of a process have to keep growing.
+
+    // Crops ripening (bone meal included), sugarcane and cacti growing upwards, stems growing melons and pumpkins,...
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onGrow(BlockGrowEvent event) {
+        denyRegenerating(event, event.getBlock());
+    }
+
+    // Grass, mycelium, vines, kelp, bamboo,...
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onSpread(BlockSpreadEvent event) {
+        denyRegenerating(event, event.getBlock());
+    }
+
+    // Snow, ice, cobblestone from lava meeting water, concrete,...
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onForm(BlockFormEvent event) {
+        denyRegenerating(event, event.getBlock());
+    }
+
+    // Trees and huge mushrooms.
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onStructureGrow(StructureGrowEvent event) {
+        event.getBlocks().removeIf(state -> {
+            if (!isRegenerating(state.getBlock())) {
+                return false;
+            }
+
+            log.fine(() -> String.format("Denied a structure from growing into %s.", Blocks.blockToString(state.getBlock())));
+            return true;
+        });
+    }
+
+    // Planting seeds on the farmland of a regenerating crop, filling the gap left by a regenerating block,...
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onPlace(BlockPlaceEvent event) {
+        if (hasBypass(event.getPlayer())) {
+            return;
+        }
+
+        denyRegenerating(event, event.getBlockPlaced());
+    }
+
+    private boolean isRegenerating(@NotNull Block block) {
+        return plugin.getRegenerationManager().getProcess(block) != null;
+    }
+
+    private void denyRegenerating(Cancellable event, Block block) {
+        if (!isRegenerating(block)) {
+            return;
+        }
+
+        event.setCancelled(true);
+        log.fine(() -> String.format("Denied change of regenerating %s.", Blocks.blockToString(block)));
+    }
+
     private boolean movesProtected(List<Block> blocks, BlockFace direction) {
         for (Block block : blocks) {
             if (isProtected(block)) {
@@ -201,7 +267,7 @@ public class ProtectionListener implements Listener {
      */
     public boolean isProtected(@NotNull Block block) {
         // A regenerating block can never be destroyed, the process would be left hanging.
-        if (plugin.getRegenerationManager().getProcess(block) != null) {
+        if (isRegenerating(block)) {
             return true;
         }
 
