@@ -11,6 +11,7 @@ import nl.aurorion.blockregen.mock.MockBlockRegenPlugin;
 import nl.aurorion.blockregen.mock.MockServer;
 import nl.aurorion.blockregen.preset.BlockPreset;
 import nl.aurorion.blockregen.preset.FixedNumberValue;
+import nl.aurorion.blockregen.preset.PresetManager;
 import nl.aurorion.blockregen.regeneration.RegenerationManager;
 import nl.aurorion.blockregen.regeneration.struct.RegenerationProcess;
 import nl.aurorion.blockregen.util.GsonHelper;
@@ -27,6 +28,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -135,6 +137,65 @@ public class RegenerationManagerSaveTests {
         new RegenerationManager(plugin).save(true);
 
         assertArrayEquals(stored, Files.readAllBytes(data));
+    }
+
+    // One stored process, its preset uses a material of another plugin.
+    private static final String STORED_PROCESS = "[{\"id\":\"8c1f6a1e-6a4e-4a8e-9a43-0c1f6a1e6a4e\","
+            + "\"location\":{\"world\":\"world\",\"x\":1,\"y\":64,\"z\":0},"
+            + "\"worldName\":\"world\",\"presetName\":\"custom_ore\",\"timeLeft\":60000}]";
+
+    @Test
+    public void processesWaitForPresetsThatLoadAfterTheServer() throws Exception {
+        Path data = dir.resolve("Data.json");
+        byte[] stored = STORED_PROCESS.getBytes(StandardCharsets.UTF_8);
+        Files.write(data, stored);
+
+        AtomicBoolean presetsRetry = new AtomicBoolean(true);
+        BlockRegenPlugin plugin = new MockBlockRegenPlugin() {
+            private final PresetManager presetManager = new PresetManager(this) {
+                @Override
+                public boolean isRetry() {
+                    return presetsRetry.get();
+                }
+            };
+
+            @Override
+            public @NotNull File getDataFolder() {
+                return dir.toFile();
+            }
+
+            @Override
+            public GsonHelper getGsonHelper() {
+                return gsonHelper;
+            }
+
+            @Override
+            public @NotNull PresetManager getPresetManager() {
+                return presetManager;
+            }
+        };
+
+        RegenerationManager manager = new RegenerationManager(plugin);
+        manager.load();
+
+        // Give an (asynchronous) load the time to finish.
+        long deadline = System.currentTimeMillis() + 500;
+        while (!manager.isLoaded() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+
+        // Presets using materials of other plugins load once the server is done loading. Starting the stored processes
+        // before that drops the ones using them, and the next save deletes them for good.
+        assertTrue(manager.isRetry(), "Loading the processes waits for the presets");
+        assertFalse(manager.isLoaded());
+
+        manager.save(true);
+        assertArrayEquals(stored, Files.readAllBytes(data), "Nothing is saved before the processes are loaded");
+
+        // The presets are retried first, then the processes load and saving resumes.
+        presetsRetry.set(false);
+        manager.reattemptLoad();
+        awaitLoaded(manager);
     }
 
     @Test

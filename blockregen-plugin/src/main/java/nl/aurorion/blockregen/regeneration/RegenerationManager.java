@@ -445,22 +445,23 @@ public class RegenerationManager {
     }
 
     public void load() {
+        // Presets using materials of other plugins only load once the server is done loading
+        // (PresetManager#reattemptLoad). Starting the stored processes before that would drop the ones using them, and
+        // the next save would delete them for good. They're loaded by reattemptLoad() then, nothing is saved until.
+        if (plugin.getPresetManager().isRetry()) {
+            this.retry = true;
+            log.warning("Some presets are not loaded yet. Loading regeneration processes after a complete server load...");
+            return;
+        }
+
         loadFromStorage().thenAcceptAsync(loadedProcesses ->
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     // Null when there's nothing to load (or the file was damaged and kept aside).
-                    if (loadedProcesses == null) {
-                        markLoaded();
-                        return;
-                    }
-
-                    if (plugin.getPresetManager().isRetry() && this.retry) {
-                        // Not loaded yet, Data.json stays untouched until the retry.
-                        log.warning("Some process couldn't be loaded, but might be salvageable. Trying again after a complete server load...");
-                    } else {
+                    if (loadedProcesses != null) {
                         // Start em
                         startAllLoaded(loadedProcesses);
-                        markLoaded();
                     }
+                    markLoaded();
                 })).exceptionally(e -> {
             log.log(Level.SEVERE, "Could not load processes: " + e.getMessage() + ". Data.json is left untouched, processes won't be saved until the next start.", e);
             return null;
