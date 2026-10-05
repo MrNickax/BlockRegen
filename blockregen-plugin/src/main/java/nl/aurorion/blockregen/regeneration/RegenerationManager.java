@@ -9,7 +9,6 @@ import nl.aurorion.blockregen.material.BlockRegenMaterial;
 import nl.aurorion.blockregen.preset.BlockPreset;
 import nl.aurorion.blockregen.regeneration.struct.RegenerationProcess;
 import nl.aurorion.blockregen.region.struct.RegenerationArea;
-import nl.aurorion.blockregen.util.AtomicFiles;
 import org.bukkit.Bukkit;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
@@ -17,11 +16,12 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 
 @Log
@@ -40,6 +40,29 @@ public class RegenerationManager {
     private final Set<UUID> bypass = new HashSet<>();
 
     private final Set<UUID> dataCheck = new HashSet<>();
+
+    // A change (process registered or removed) is saved at most this long after it happened, on top of the periodic
+    // auto-save. A crash then loses at most that much instead of a whole auto-save interval.
+    private static final long CHANGE_SAVE_DELAY_TICKS = 30 * 20L;
+
+    // How long a save waits for another one that is still writing.
+    private static final long SAVE_LOCK_TIMEOUT_SECONDS = 10;
+
+    // Set when a process is registered or removed, cleared when a save takes its snapshot.
+    private final AtomicBoolean dirty = new AtomicBoolean(false);
+
+    // True while a change save is scheduled, a burst of changes leads to a single write.
+    private final AtomicBoolean changeSaveScheduled = new AtomicBoolean(false);
+
+    // One save at a time. The snapshot is taken under the lock too, an older snapshot never replaces a newer one.
+    private final ReentrantLock saveLock = new ReentrantLock();
+
+    // Data.json is only written once the stored processes are loaded (asynchronously). Saving the still empty cache
+    // before that would wipe them.
+    private volatile boolean loaded = false;
+
+    // Set by the final save on shutdown, any save after it is dropped.
+    private volatile boolean closed = false;
 
     public RegenerationManager(BlockRegenPlugin plugin) {
         this.plugin = plugin;
@@ -138,6 +161,8 @@ public class RegenerationManager {
 
         cache.put(process.getBlock(), process);
         log.fine(() -> "Registered regeneration process " + process);
+
+        markDirty();
     }
 
     @Nullable
@@ -163,10 +188,44 @@ public class RegenerationManager {
 
         cache.remove(block);
         log.fine(() -> String.format("Removed process from cache: %s", process));
+
+        markDirty();
     }
 
     public void removeProcess(@NotNull Block block) {
-        cache.remove(block);
+        if (cache.remove(block) != null) {
+            markDirty();
+        }
+    }
+
+    // The cache differs from Data.json now, schedule a save.
+    private void markDirty() {
+        dirty.set(true);
+        scheduleChangeSave();
+    }
+
+    // At most one change save is pending. It runs off the main thread, only while auto-save is enabled.
+    private void scheduleChangeSave() {
+        if (closed || autoSaveTask == null || !autoSaveTask.isRunning() || !plugin.isEnabled()) {
+            return;
+        }
+
+        if (!changeSaveScheduled.compareAndSet(false, true)) {
+            return;
+        }
+
+        try {
+            Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, () -> {
+                changeSaveScheduled.set(false);
+
+                if (dirty.get()) {
+                    save(true);
+                }
+            }, CHANGE_SAVE_DELAY_TICKS);
+        } catch (RuntimeException e) {
+            changeSaveScheduled.set(false);
+            log.log(Level.WARNING, "Could not schedule a save of regeneration processes: " + e.getMessage(), e);
+        }
     }
 
     public void startAutoSave() {
@@ -222,43 +281,89 @@ public class RegenerationManager {
         save(false);
     }
 
+    /**
+     * Save the running processes to Data.json.
+     *
+     * @param sync Save on the calling thread instead of asynchronously.
+     */
     public void save(boolean sync) {
-        final File dataFile = new File(plugin.getDataFolder(), "/Data.json");
+        if (sync) {
+            write(false);
+        } else {
+            CompletableFuture.runAsync(() -> write(false));
+        }
+    }
 
-        if (cache.isEmpty()) {
-            log.fine(() -> "No processes to save.");
-            // Atomic, a failed write leaves the previous file intact instead of a deleted or truncated one.
-            try {
-                AtomicFiles.write(dataFile.toPath(), "[]\n".getBytes(StandardCharsets.UTF_8));
-            } catch (IOException e) {
-                log.log(Level.SEVERE, "Failed to create empty Data.json: " + e.getMessage(), e);
-            }
+    /**
+     * The final save on shutdown, after the timers were stopped. Runs on the calling thread, any save after it is
+     * dropped.
+     */
+    public void saveOnShutdown() {
+        write(true);
+    }
+
+    private void write(boolean last) {
+        if (!loaded) {
+            log.warning("Regeneration processes are not loaded yet, not saving them. Data.json is left untouched.");
             return;
         }
 
-        // Processes waiting for a manual regeneration keep their timeLeft, they have no regeneration time to derive it from.
-        cache.values().forEach(process -> {
-            if (process.shouldRegenerate()) {
-                process.setTimeLeft(process.getRegenerationTime() - System.currentTimeMillis());
+        final File dataFile = new File(plugin.getDataFolder(), "/Data.json");
+
+        boolean locked = lockForSave();
+
+        if (!locked) {
+            if (!last) {
+                dirty.set(true);
+                log.warning("Another save of regeneration processes is still running, skipping this one.");
+                return;
             }
-        });
-
-        // TODO: Shouldn't be required
-        purgeExpired();
-
-        final List<RegenerationProcess> finalCache = new ArrayList<>(cache.values());
-
-        CompletableFuture<Void> future = plugin.getGsonHelper().save(finalCache, dataFile.toPath())
-                .exceptionally(e -> {
-                    log.log(Level.SEVERE, "Could not save processes: " + e.getMessage(), e);
-                    return null;
-                });
-
-        if (sync) {
-            future.join();
+            // The write is atomic either way, the worst case is the older snapshot landing last.
+            log.severe("Another save of regeneration processes is still running after " + SAVE_LOCK_TIMEOUT_SECONDS + "s, writing the final one anyway.");
         }
 
-        log.fine(() -> "Saved " + finalCache.size() + " regeneration processes..");
+        try {
+            if (closed) {
+                return;
+            }
+            closed = last;
+
+            // Processes waiting for a manual regeneration keep their timeLeft, they have no regeneration time to derive it from.
+            cache.values().forEach(process -> {
+                if (process.shouldRegenerate()) {
+                    process.setTimeLeft(process.getRegenerationTime() - System.currentTimeMillis());
+                }
+            });
+
+            // TODO: Shouldn't be required
+            purgeExpired();
+
+            // Cleared before the snapshot, a change made while writing marks the cache dirty again.
+            dirty.set(false);
+
+            final List<RegenerationProcess> finalCache = new ArrayList<>(cache.values());
+
+            // Atomic, a crash or a failed write leaves the previous file intact.
+            plugin.getGsonHelper().saveNow(finalCache, dataFile.toPath());
+
+            log.fine(() -> "Saved " + finalCache.size() + " regeneration processes..");
+        } catch (Exception e) {
+            dirty.set(true);
+            log.log(Level.SEVERE, "Could not save processes: " + e.getMessage(), e);
+        } finally {
+            if (locked) {
+                saveLock.unlock();
+            }
+        }
+    }
+
+    private boolean lockForSave() {
+        try {
+            return saveLock.tryLock(SAVE_LOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private boolean convertProcess(@NotNull RegenerationProcess process) {
@@ -285,24 +390,47 @@ public class RegenerationManager {
         return plugin.getGsonHelper().loadListAsync(plugin.getDataFolder().getPath() + "/Data.json", RegenerationProcess.class);
     }
 
+    // One process failing to start must not keep the others from starting.
+    private void startAllLoaded(@NotNull List<RegenerationProcess> loadedProcesses) {
+        for (RegenerationProcess loadedProcess : loadedProcesses) {
+            try {
+                startLoaded(loadedProcess);
+            } catch (Exception e) {
+                log.log(Level.SEVERE, "Could not start stored regeneration process " + loadedProcess + ": " + e.getMessage(), e);
+            }
+        }
+        log.info("Loaded " + this.cache.size() + " regeneration process(es)...");
+    }
+
+    // Data.json may be written from now on.
+    private void markLoaded() {
+        this.loaded = true;
+
+        // Processes registered while loading.
+        if (dirty.get()) {
+            scheduleChangeSave();
+        }
+    }
+
     public void load() {
         loadFromStorage().thenAcceptAsync(loadedProcesses ->
                 Bukkit.getScheduler().runTask(plugin, () -> {
+                    // Null when there's nothing to load (or the file was damaged and kept aside).
                     if (loadedProcesses == null) {
+                        markLoaded();
                         return;
                     }
 
                     if (plugin.getPresetManager().isRetry() && this.retry) {
+                        // Not loaded yet, Data.json stays untouched until the retry.
                         log.warning("Some process couldn't be loaded, but might be salvageable. Trying again after a complete server load...");
                     } else {
                         // Start em
-                        for (RegenerationProcess loadedProcess : loadedProcesses) {
-                            startLoaded(loadedProcess);
-                        }
-                        log.info("Loaded " + this.cache.size() + " regeneration process(es)...");
+                        startAllLoaded(loadedProcesses);
+                        markLoaded();
                     }
                 })).exceptionally(e -> {
-            log.log(Level.SEVERE, "Could not load processes: " + e.getMessage(), e);
+            log.log(Level.SEVERE, "Could not load processes: " + e.getMessage() + ". Data.json is left untouched, processes won't be saved until the next start.", e);
             return null;
         });
     }
@@ -314,20 +442,15 @@ public class RegenerationManager {
 
         this.retry = false;
 
-        loadFromStorage().thenAcceptAsync(loadedProcesses -> {
-            if (loadedProcesses == null) {
-                throw new RuntimeException("Could not load processes from storage.");
-            }
-
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                // We can throw away processes that are not valid. Should do no harm.
-                for (RegenerationProcess loadedProcess : loadedProcesses) {
-                    startLoaded(loadedProcess);
-                }
-                log.info("Loaded " + this.cache.size() + " regeneration process(es)...");
-            });
-        }).exceptionally(e -> {
-            log.log(Level.SEVERE, "Could not load processes: " + e.getMessage(), e);
+        loadFromStorage().thenAcceptAsync(loadedProcesses ->
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    // We can throw away processes that are not valid. Should do no harm.
+                    if (loadedProcesses != null) {
+                        startAllLoaded(loadedProcesses);
+                    }
+                    markLoaded();
+                })).exceptionally(e -> {
+            log.log(Level.SEVERE, "Could not load processes: " + e.getMessage() + ". Data.json is left untouched, processes won't be saved until the next start.", e);
             return null;
         });
     }

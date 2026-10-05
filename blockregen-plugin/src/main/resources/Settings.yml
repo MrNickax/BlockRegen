@@ -70,6 +70,8 @@ Residence-Support: true
 
 # Periodically save running regeneration processes and regions.
 # A crash loses whatever changed since the last save. Enabled when missing.
+# While enabled, new and finished regenerations are also saved about 30 seconds after they happen.
+# When disabled, processes are only saved on shutdown.
 Auto-Save:
   Enabled: true
   # Interval in seconds. Clamped to 10-300: anything above 300 (5 minutes) is treated as 300.

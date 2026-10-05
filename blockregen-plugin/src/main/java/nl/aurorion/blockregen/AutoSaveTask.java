@@ -81,7 +81,8 @@ public class AutoSaveTask implements Runnable {
     public void run() {
         // Each save on its own, a failing one must neither skip the other nor break the timer.
         try {
-            plugin.getRegenerationManager().save();
+            // Already off the main thread, save right here.
+            plugin.getRegenerationManager().save(true);
         } catch (Exception e) {
             log.log(Level.SEVERE, "Could not auto-save regeneration processes: " + e.getMessage(), e);
         }
