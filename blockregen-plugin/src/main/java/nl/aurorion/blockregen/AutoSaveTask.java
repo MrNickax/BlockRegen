@@ -92,5 +92,12 @@ public class AutoSaveTask implements Runnable {
         } catch (Exception e) {
             log.log(Level.SEVERE, "Could not auto-save regions: " + e.getMessage(), e);
         }
+
+        try {
+            // Hands itself over to the main thread.
+            plugin.getRegenerationManager().purgeExpired();
+        } catch (Exception e) {
+            log.log(Level.SEVERE, "Could not purge expired regeneration processes: " + e.getMessage(), e);
+        }
     }
 }

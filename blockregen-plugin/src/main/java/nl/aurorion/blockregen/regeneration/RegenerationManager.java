@@ -1,5 +1,8 @@
 package nl.aurorion.blockregen.regeneration;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import lombok.Getter;
 import lombok.extern.java.Log;
 import nl.aurorion.blockregen.AutoSaveTask;
@@ -9,6 +12,7 @@ import nl.aurorion.blockregen.material.BlockRegenMaterial;
 import nl.aurorion.blockregen.preset.BlockPreset;
 import nl.aurorion.blockregen.regeneration.struct.RegenerationProcess;
 import nl.aurorion.blockregen.region.struct.RegenerationArea;
+import nl.aurorion.blockregen.util.AtomicFiles;
 import org.bukkit.Bukkit;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
@@ -16,6 +20,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,6 +53,9 @@ public class RegenerationManager {
     // How long a save waits for another one that is still writing.
     private static final long SAVE_LOCK_TIMEOUT_SECONDS = 10;
 
+    // How long past due a process without a task has to be before purgeExpired regenerates it.
+    private static final long PURGE_GRACE_MILLIS = 10_000;
+
     // Set when a process is registered or removed, cleared when a save takes its snapshot.
     private final AtomicBoolean dirty = new AtomicBoolean(false);
 
@@ -59,6 +67,7 @@ public class RegenerationManager {
 
     // Data.json is only written once the stored processes are loaded (asynchronously). Saving the still empty cache
     // before that would wipe them.
+    @Getter
     private volatile boolean loaded = false;
 
     // Set by the final save on shutdown, any save after it is dropped.
@@ -265,19 +274,26 @@ public class RegenerationManager {
         });
     }
 
-    // Regenerate processes that are past due and drop them from the cache.
-    // Leaving them cached would block the registration of any later process on the same block.
-    private void purgeExpired() {
-        for (RegenerationProcess process : cache.values()) {
-            if (process.getTimeLeft() < 0 && process.shouldRegenerate()) {
-                process.stop();
-                removeProcess(process);
+    /**
+     * Regenerate processes that are past due but have no task left to do it. Leaving them would keep their blocks in
+     * the replace-block state until the next restart.
+     * <p>
+     * Regenerating touches blocks and calls events, so it always happens on the main thread.
+     */
+    public void purgeExpired() {
+        if (!Bukkit.isPrimaryThread()) {
+            Bukkit.getScheduler().runTask(plugin, this::purgeExpired);
+            return;
+        }
 
-                if (Bukkit.isPrimaryThread()) {
-                    process.regenerateBlock();
-                } else {
-                    Bukkit.getScheduler().runTask(plugin, process::regenerateBlock);
-                }
+        long now = System.currentTimeMillis();
+
+        for (RegenerationProcess process : new ArrayList<>(cache.values())) {
+            // The grace leaves processes due right now to their own task.
+            if (process.shouldRegenerate() && !process.isRunning() && process.getRegenerationTime() + PURGE_GRACE_MILLIS < now) {
+                log.fine(() -> "Regenerating expired process " + process);
+                // The regular path: calls the event and waits for solid ground.
+                process.regenerate();
             }
         }
     }
@@ -333,25 +349,15 @@ public class RegenerationManager {
             }
             closed = last;
 
-            // Processes waiting for a manual regeneration keep their timeLeft, they have no regeneration time to derive it from.
-            cache.values().forEach(process -> {
-                if (process.shouldRegenerate()) {
-                    process.setTimeLeft(process.getRegenerationTime() - System.currentTimeMillis());
-                }
-            });
-
-            // TODO: Shouldn't be required
-            purgeExpired();
-
             // Cleared before the snapshot, a change made while writing marks the cache dirty again.
             dirty.set(false);
 
-            final List<RegenerationProcess> finalCache = new ArrayList<>(cache.values());
+            final JsonArray snapshot = snapshot(System.currentTimeMillis());
 
             // Atomic, a crash or a failed write leaves the previous file intact.
-            plugin.getGsonHelper().saveNow(finalCache, dataFile.toPath());
+            AtomicFiles.write(dataFile.toPath(), plugin.getGsonHelper().getGson().toJson(snapshot).getBytes(StandardCharsets.UTF_8));
 
-            log.fine(() -> "Saved " + finalCache.size() + " regeneration processes..");
+            log.fine(() -> "Saved " + snapshot.size() + " regeneration processes..");
         } catch (Exception e) {
             dirty.set(true);
             log.log(Level.SEVERE, "Could not save processes: " + e.getMessage(), e);
@@ -360,6 +366,27 @@ public class RegenerationManager {
                 saveLock.unlock();
             }
         }
+    }
+
+    // Serialized copies of the processes, with the time left as of now. The live processes aren't touched: this may run
+    // off the main thread, past due ones are regenerated by their own task (or purgeExpired).
+    @NotNull
+    private JsonArray snapshot(long now) {
+        Gson gson = plugin.getGsonHelper().getGson();
+        JsonArray processes = new JsonArray();
+
+        for (RegenerationProcess process : cache.values()) {
+            JsonElement element = gson.toJsonTree(process);
+
+            // Processes waiting for a manual regeneration keep their timeLeft, they have no regeneration time to derive it from.
+            if (process.shouldRegenerate()) {
+                // A past due process regenerates right after the next start.
+                element.getAsJsonObject().addProperty("timeLeft", Math.max(0L, process.getRegenerationTime() - now));
+            }
+
+            processes.add(element);
+        }
+        return processes;
     }
 
     private boolean lockForSave() {
