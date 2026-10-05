@@ -151,6 +151,13 @@ public class ConfigFile {
     }
 
     public void save() {
+        save(fileConfiguration);
+    }
+
+    /**
+     * Write the given configuration to this file. Skipped while the file failed to load.
+     */
+    public void save(@NotNull FileConfiguration configuration) {
         if (loadFailed) {
             log.warning("Not saving " + this.path + ", it failed to load. Fix it and reload.");
             return;
@@ -159,7 +166,7 @@ public class ConfigFile {
         try {
             // Not FileConfiguration#save, it rewrites the file in place. A crash during that (Regions.yml is saved by
             // every auto-save) would leave a torn file.
-            AtomicFiles.write(file.toPath(), fileConfiguration.saveToString().getBytes(Charsets.UTF_8));
+            AtomicFiles.write(file.toPath(), configuration.saveToString().getBytes(Charsets.UTF_8));
         } catch (IOException e) {
             log.log(Level.SEVERE, "Could not save " + this.path + ": " + e.getMessage(), e);
         }

@@ -15,11 +15,14 @@ import org.bukkit.Location;
 import org.bukkit.block.Block;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 @Log
 public class RegionManager {
@@ -32,6 +35,11 @@ public class RegionManager {
     private final Set<RawRegion> failedRegions = new HashSet<>();
 
     private final Map<UUID, RegionSelection> selections = new HashMap<>();
+
+    // How long a save waits for another one that is still writing.
+    private static final long SAVE_LOCK_TIMEOUT_SECONDS = 10;
+
+    private final ReentrantLock saveLock = new ReentrantLock();
 
     public RegionManager(BlockRegenPlugin plugin) {
         this.plugin = plugin;
@@ -246,36 +254,65 @@ public class RegionManager {
     }
 
     public void save() {
-        FileConfiguration regions = plugin.getFiles().getRegions().getFileConfiguration();
-
-        regions.set("Regions", null);
-
-        ConfigurationSection root = ensureRegionsSection(regions);
-
-        // Save failed regions to preserve them for next run. Maybe the world comes back.
-        for (RawRegion rawRegion : new HashSet<>(this.failedRegions)) {
-            ConfigurationSection regionSection = root.createSection(rawRegion.getName());
-
-            regionSection.set("Min", rawRegion.getMin());
-            regionSection.set("Max", rawRegion.getMax());
-
-            regionSection.set("All", rawRegion.isAll());
-            regionSection.set("Presets", rawRegion.getBlockPresets());
-            regionSection.set("Disable-Other-Break", rawRegion.getDisableOtherBreak());
+        // The auto-save (off the main thread), changes and the shutdown (main thread) save one at a time.
+        boolean locked = lockForSave();
+        if (!locked) {
+            // Every save builds its own configuration, the worst case is the older one landing last.
+            log.warning("Another save of regions is still running after " + SAVE_LOCK_TIMEOUT_SECONDS + "s, saving anyway.");
         }
 
-        for (RegenerationArea area : new HashSet<>(this.loadedAreas)) {
-            ConfigurationSection section = root.createSection(area.getName());
-            area.serialize(section);
+        try {
+            ConfigFile file = plugin.getFiles().getRegions();
+
+            // A fresh configuration for every save, the loaded one is never touched. Two saves building the file in
+            // the same configuration at once could write a mix of both.
+            YamlConfiguration regions = new YamlConfiguration();
+            copyHeader(file.getFileConfiguration(), regions);
+
+            ConfigurationSection root = regions.createSection("Regions");
+
+            // Save failed regions to preserve them for next run. Maybe the world comes back.
+            for (RawRegion rawRegion : new HashSet<>(this.failedRegions)) {
+                ConfigurationSection regionSection = root.createSection(rawRegion.getName());
+
+                regionSection.set("Min", rawRegion.getMin());
+                regionSection.set("Max", rawRegion.getMax());
+
+                regionSection.set("All", rawRegion.isAll());
+                regionSection.set("Presets", rawRegion.getBlockPresets());
+                regionSection.set("Priority", rawRegion.getPriority());
+                regionSection.set("Disable-Other-Break", rawRegion.getDisableOtherBreak());
+            }
+
+            for (RegenerationArea area : new HashSet<>(this.loadedAreas)) {
+                ConfigurationSection section = root.createSection(area.getName());
+                area.serialize(section);
+            }
+
+            file.save(regions);
+
+            log.fine(() -> "Saved " + (this.loadedAreas.size() + this.failedRegions.size()) + " area(s)...");
+        } finally {
+            if (locked) {
+                saveLock.unlock();
+            }
         }
-
-        plugin.getFiles().getRegions().save();
-
-        log.fine(() -> "Saved " + (this.loadedAreas.size() + this.failedRegions.size()) + " area(s)...");
     }
 
-    private ConfigurationSection ensureRegionsSection(FileConfiguration configuration) {
-        return configuration.contains("Regions") ? configuration.getConfigurationSection("Regions") : configuration.createSection("Regions");
+    @SuppressWarnings("deprecation") // The replacement (getHeader/setHeader) doesn't exist before 1.18.
+    private static void copyHeader(@Nullable FileConfiguration from, @NotNull FileConfiguration to) {
+        if (from != null) {
+            to.options().header(from.options().header());
+        }
+    }
+
+    private boolean lockForSave() {
+        try {
+            return saveLock.tryLock(SAVE_LOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     public boolean exists(String name) {

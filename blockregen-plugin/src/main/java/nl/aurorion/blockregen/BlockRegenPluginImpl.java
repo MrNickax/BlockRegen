@@ -49,6 +49,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -56,6 +57,9 @@ import java.util.logging.Logger;
 public class BlockRegenPluginImpl extends JavaPlugin implements Listener, BlockRegenPlugin {
 
     private static final String PACKAGE_NAME = BlockRegenPluginImpl.class.getPackage().getName();
+
+    // How long the shutdown waits for an auto-save in progress. Longer than a save waits for another one's lock.
+    private static final long SHUTDOWN_AUTO_SAVE_WAIT_SECONDS = 15;
 
     private static BlockRegenPlugin instance;
 
@@ -286,6 +290,12 @@ public class BlockRegenPluginImpl extends JavaPlugin implements Listener, BlockR
         // here, synchronously. Every step is isolated, a failing one must not skip the saves after it.
         try {
             regenerationManager.stopAutoSave();
+
+            // An auto-save already running (off the main thread) finishes first, the final saves come after it.
+            AutoSaveTask autoSaveTask = regenerationManager.getAutoSaveTask();
+            if (autoSaveTask != null && !autoSaveTask.awaitIdle(SHUTDOWN_AUTO_SAVE_WAIT_SECONDS, TimeUnit.SECONDS)) {
+                log.severe("The auto-save is still running after " + SHUTDOWN_AUTO_SAVE_WAIT_SECONDS + "s, saving anyway.");
+            }
         } catch (Exception e) {
             log.log(Level.SEVERE, "Could not stop the auto-save: " + e.getMessage(), e);
         }

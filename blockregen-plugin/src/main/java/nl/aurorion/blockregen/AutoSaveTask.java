@@ -6,6 +6,8 @@ import org.bukkit.Bukkit;
 import org.bukkit.scheduler.BukkitTask;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 
 @Log
@@ -28,7 +30,13 @@ public class AutoSaveTask implements Runnable {
     private BukkitTask task;
 
     @Getter
-    private boolean running = false;
+    private volatile boolean running = false;
+
+    // Set by stop(). A run the scheduler already handed to a thread then does nothing.
+    private volatile boolean stopped = false;
+
+    // Held while a run is in progress, so the shutdown can wait for it before its own final saves.
+    private final ReentrantLock runLock = new ReentrantLock();
 
     private final BlockRegenPlugin plugin;
 
@@ -58,11 +66,14 @@ public class AutoSaveTask implements Runnable {
         }
 
         running = true;
+        stopped = false;
         task = Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, this, period * 20L, period * 20L);
         log.info("Starting auto-save.. with an interval of " + period + " seconds.");
     }
 
     public void stop() {
+        stopped = true;
+
         if (!running) {
             return;
         }
@@ -77,8 +88,38 @@ public class AutoSaveTask implements Runnable {
         running = false;
     }
 
+    /**
+     * Wait until a run that is in progress has finished, at most the given time.
+     *
+     * @return False if it's still running.
+     */
+    public boolean awaitIdle(long timeout, @NotNull TimeUnit unit) {
+        try {
+            if (runLock.tryLock(timeout, unit)) {
+                runLock.unlock();
+                return true;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return false;
+    }
+
     @Override
     public void run() {
+        runLock.lock();
+        try {
+            if (stopped) {
+                return;
+            }
+
+            saveAll();
+        } finally {
+            runLock.unlock();
+        }
+    }
+
+    private void saveAll() {
         // Each save on its own, a failing one must neither skip the other nor break the timer.
         try {
             // Already off the main thread, save right here.
