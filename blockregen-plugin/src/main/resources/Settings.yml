@@ -69,7 +69,8 @@ WorldGuard-Support: true
 Residence-Support: true
 
 # Periodically save running regeneration processes and regions.
+# A crash loses whatever changed since the last save. Enabled when missing.
 Auto-Save:
   Enabled: true
-  # Interval in seconds
-  Interval: 600
+  # Interval in seconds. Clamped to 10-300: anything above 300 (5 minutes) is treated as 300.
+  Interval: 300

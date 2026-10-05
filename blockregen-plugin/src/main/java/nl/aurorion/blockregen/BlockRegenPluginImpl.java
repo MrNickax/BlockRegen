@@ -221,7 +221,7 @@ public class BlockRegenPluginImpl extends JavaPlugin implements Listener, BlockR
             regenerationManager.reattemptLoad();
             regionManager.reattemptLoad();
 
-            if (getConfig().getBoolean("Auto-Save.Enabled", false)) {
+            if (AutoSaveTask.isEnabled(this)) {
                 regenerationManager.startAutoSave();
             }
         }, 1L);
@@ -258,8 +258,10 @@ public class BlockRegenPluginImpl extends JavaPlugin implements Listener, BlockR
 
         regionManager.reload();
 
-        if (getConfig().getBoolean("Auto-Save.Enabled", false)) {
+        if (AutoSaveTask.isEnabled(this)) {
             regenerationManager.reloadAutoSave();
+        } else {
+            regenerationManager.stopAutoSave();
         }
 
         consoleHandler.removeListener(sender);

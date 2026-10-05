@@ -186,6 +186,12 @@ public class RegenerationManager {
         }
     }
 
+    public void stopAutoSave() {
+        if (autoSaveTask != null) {
+            autoSaveTask.stop();
+        }
+    }
+
     // Revert blocks before disabling
     public void revertAll() {
         cache.values().forEach(process -> {

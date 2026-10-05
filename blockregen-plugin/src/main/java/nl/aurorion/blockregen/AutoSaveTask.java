@@ -4,10 +4,25 @@ import lombok.Getter;
 import lombok.extern.java.Log;
 import org.bukkit.Bukkit;
 import org.bukkit.scheduler.BukkitTask;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.logging.Level;
 
 @Log
 public class AutoSaveTask implements Runnable {
 
+    /**
+     * Upper bound of the interval in seconds. A crash loses everything since the last save, so a longer configured
+     * interval (live servers keep their old Settings.yml, which shipped with 600) is clamped down to this.
+     */
+    public static final int MAX_INTERVAL = 300;
+
+    /**
+     * Lower bound of the interval in seconds, so a typo can't make the plugin rewrite its data every tick.
+     */
+    public static final int MIN_INTERVAL = 10;
+
+    @Getter
     private int period;
 
     private BukkitTask task;
@@ -21,8 +36,20 @@ public class AutoSaveTask implements Runnable {
         this.plugin = plugin;
     }
 
+    /**
+     * Auto-save is on unless it's explicitly disabled.
+     */
+    public static boolean isEnabled(@NotNull BlockRegenPlugin plugin) {
+        return plugin.getConfig().getBoolean("Auto-Save.Enabled", true);
+    }
+
     public void load() {
-        this.period = plugin.getConfig().getInt("Auto-Save.Interval", 300);
+        int configured = plugin.getConfig().getInt("Auto-Save.Interval", MAX_INTERVAL);
+        this.period = Math.max(MIN_INTERVAL, Math.min(configured, MAX_INTERVAL));
+
+        if (period != configured) {
+            log.warning("Auto-Save.Interval of " + configured + " seconds is outside of " + MIN_INTERVAL + "-" + MAX_INTERVAL + ", using " + period + " seconds.");
+        }
     }
 
     public void start() {
@@ -52,7 +79,17 @@ public class AutoSaveTask implements Runnable {
 
     @Override
     public void run() {
-        plugin.getRegenerationManager().save();
-        plugin.getRegionManager().save();
+        // Each save on its own, a failing one must neither skip the other nor break the timer.
+        try {
+            plugin.getRegenerationManager().save();
+        } catch (Exception e) {
+            log.log(Level.SEVERE, "Could not auto-save regeneration processes: " + e.getMessage(), e);
+        }
+
+        try {
+            plugin.getRegionManager().save();
+        } catch (Exception e) {
+            log.log(Level.SEVERE, "Could not auto-save regions: " + e.getMessage(), e);
+        }
     }
 }
