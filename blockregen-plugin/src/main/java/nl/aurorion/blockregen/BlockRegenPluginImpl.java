@@ -282,15 +282,32 @@ public class BlockRegenPluginImpl extends JavaPlugin implements Listener, BlockR
 
     @Override
     public void onDisable() {
-        if (regenerationManager.getAutoSaveTask() != null) {
-            regenerationManager.getAutoSaveTask().stop();
+        // Stop the timers first. Scheduled tasks don't run once the plugin is disabled, the final saves happen right
+        // here, synchronously. Every step is isolated, a failing one must not skip the saves after it.
+        try {
+            regenerationManager.stopAutoSave();
+        } catch (Exception e) {
+            log.log(Level.SEVERE, "Could not stop the auto-save: " + e.getMessage(), e);
         }
 
         if (finishedLoading) {
-            regenerationManager.revertAll();
-            regenerationManager.save(true);
+            try {
+                regenerationManager.revertAll();
+            } catch (Exception e) {
+                log.log(Level.SEVERE, "Could not revert regenerating blocks: " + e.getMessage(), e);
+            }
 
-            regionManager.save();
+            try {
+                regenerationManager.saveOnShutdown();
+            } catch (Exception e) {
+                log.log(Level.SEVERE, "Could not save regeneration processes: " + e.getMessage(), e);
+            }
+
+            try {
+                regionManager.save();
+            } catch (Exception e) {
+                log.log(Level.SEVERE, "Could not save regions: " + e.getMessage(), e);
+            }
         }
 
         this.teardownLogger();

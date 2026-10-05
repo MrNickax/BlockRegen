@@ -254,9 +254,14 @@ public class RegenerationManager {
     // Revert blocks before disabling
     public void revertAll() {
         cache.values().forEach(process -> {
-            // Stop the task, otherwise it could fire before the server is down and undo the revert.
-            process.stop();
-            process.revertBlock();
+            // One block failing must not leave the others un-reverted, nor skip the save that follows.
+            try {
+                // Stop the task, otherwise it could fire before the server is down and undo the revert.
+                process.stop();
+                process.revertBlock();
+            } catch (Exception e) {
+                log.log(Level.SEVERE, "Could not revert " + process + ": " + e.getMessage(), e);
+            }
         });
     }
 
