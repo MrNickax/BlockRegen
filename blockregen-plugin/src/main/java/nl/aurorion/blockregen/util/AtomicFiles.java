@@ -168,6 +168,23 @@ public final class AtomicFiles {
         }
     }
 
+    /**
+     * Copy a file that can't be read to {@code <name>.corrupt-<timestamp>} next to it, leaving the original in place.
+     *
+     * @return Where the copy was kept, null if it couldn't be copied.
+     */
+    @Nullable
+    public static Path copyAside(@NotNull Path file) {
+        Path aside = asidePath(file);
+
+        try {
+            return Files.copy(file, aside, StandardCopyOption.COPY_ATTRIBUTES);
+        } catch (IOException e) {
+            log.log(Level.SEVERE, "Could not keep a copy of " + file + ": " + e.getMessage(), e);
+            return null;
+        }
+    }
+
     @NotNull
     private static Path asidePath(@NotNull Path file) {
         String timestamp = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS").format(new Date());

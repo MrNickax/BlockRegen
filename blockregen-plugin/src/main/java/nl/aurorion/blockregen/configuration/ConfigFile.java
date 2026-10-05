@@ -9,12 +9,14 @@ import nl.aurorion.blockregen.util.AtomicFiles;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.logging.Level;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -34,6 +36,10 @@ public class ConfigFile {
 
     @Getter
     private FileConfiguration fileConfiguration;
+
+    // The file couldn't be read or parsed, saving is disabled until a successful load.
+    @Getter
+    private volatile boolean loadFailed = false;
 
     @Getter
     @Setter
@@ -118,22 +124,38 @@ public class ConfigFile {
             try {
                 config.loadFromString(builder.toString());
                 this.fileConfiguration = config;
+                this.loadFailed = false;
             } catch (InvalidConfigurationException e) {
-                log.log(Level.SEVERE, "Invalid YAML configuration in " + this.path + ": " + e.getMessage(), e);
-                this.fileConfiguration = new YamlConfiguration();
+                failLoad("Invalid YAML configuration in", e);
             }
         } catch (IOException e) {
-            log.log(Level.SEVERE, "Could not read file " + this.path + ": " + e.getMessage(), e);
-            this.fileConfiguration = new YamlConfiguration();
+            failLoad("Could not read file", e);
         } catch (Exception e) {
-            log.log(Level.SEVERE, "Error processing file " + this.path + ": " + e.getMessage(), e);
-            this.fileConfiguration = new YamlConfiguration();
+            failLoad("Error processing file", e);
         }
 
         log.info("Loaded file " + this.path);
     }
 
+    // Go on with an empty configuration, but never save it over the file: that would replace whatever the file holds.
+    // The file stays in place, so the next start reports the same problem instead of quietly using defaults.
+    private void failLoad(@NotNull String reason, @NotNull Exception e) {
+        this.loadFailed = true;
+        this.fileConfiguration = new YamlConfiguration();
+
+        Path copy = AtomicFiles.copyAside(file.toPath());
+
+        log.log(Level.SEVERE, reason + " " + this.path + ": " + e.getMessage()
+                + ". Using an empty configuration, the file won't be saved until it's fixed and reloaded"
+                + (copy == null ? "." : ". A copy was kept as " + copy.getFileName() + "."), e);
+    }
+
     public void save() {
+        if (loadFailed) {
+            log.warning("Not saving " + this.path + ", it failed to load. Fix it and reload.");
+            return;
+        }
+
         try {
             // Not FileConfiguration#save, it rewrites the file in place. A crash during that (Regions.yml is saved by
             // every auto-save) would leave a torn file.
