@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.java.Log;
 import nl.aurorion.blockregen.BlockRegenPlugin;
+import nl.aurorion.blockregen.util.AtomicFiles;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -134,9 +135,11 @@ public class ConfigFile {
 
     public void save() {
         try {
-            fileConfiguration.save(file);
+            // Not FileConfiguration#save, it rewrites the file in place. A crash during that (Regions.yml is saved by
+            // every auto-save) would leave a torn file.
+            AtomicFiles.write(file.toPath(), fileConfiguration.saveToString().getBytes(Charsets.UTF_8));
         } catch (IOException e) {
-            log.severe("Could not save " + this.path);
+            log.log(Level.SEVERE, "Could not save " + this.path + ": " + e.getMessage(), e);
         }
     }
 }
