@@ -199,6 +199,36 @@ public class RegenerationManagerSaveTests {
     }
 
     @Test
+    public void processThatFailsWithALinkageErrorDoesNotBlockSaving() throws Exception {
+        // A process in a world whose plugin is broken: asking for the world throws NoClassDefFoundError.
+        Files.write(dir.resolve("Data.json"), STORED_PROCESS.replace(":\"world\"", ":\"" + MockServer.BROKEN_WORLD + "\"").getBytes(StandardCharsets.UTF_8));
+
+        RegenerationManager manager = new RegenerationManager(plugin);
+        manager.load();
+
+        // The other processes start and the save gate opens anyway.
+        awaitLoaded(manager);
+    }
+
+    @Test
+    public void savingResumesWhenTheSameInstanceIsEnabledAgain() throws Exception {
+        RegenerationManager manager = loadedManager();
+        manager.saveOnShutdown();
+
+        // PlugMan and the like disable and enable the same plugin instance.
+        manager.load();
+        awaitLoaded(manager);
+
+        Path data = dir.resolve("Data.json");
+        Files.deleteIfExists(data);
+        manager.registerProcess(process(1, System.currentTimeMillis() + 60_000));
+        manager.save(true);
+
+        assertTrue(Files.exists(data), "Processes are saved again after the plugin is enabled again");
+        assertEquals(1, savedTimeLeft().size());
+    }
+
+    @Test
     public void saveLeavesTheRunningProcessesAlone() throws Exception {
         RegenerationManager manager = loadedManager();
 

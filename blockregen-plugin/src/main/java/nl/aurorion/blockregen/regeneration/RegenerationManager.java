@@ -26,6 +26,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 
@@ -64,6 +65,15 @@ public class RegenerationManager {
 
     // One save at a time. The snapshot is taken under the lock too, an older snapshot never replaces a newer one.
     private final ReentrantLock saveLock = new ReentrantLock();
+
+    // Numbers the snapshots in the order they're taken. Guards the case the final save skips the lock after a
+    // timeout: a write only replaces Data.json when no newer snapshot got there first.
+    private final AtomicLong snapshotNumber = new AtomicLong();
+
+    // The number of the snapshot Data.json holds, guarded by commitLock (held only for the rename).
+    private long committedSnapshot = 0;
+
+    private final Object commitLock = new Object();
 
     // Data.json is only written once the stored processes are loaded (asynchronously). Saving the still empty cache
     // before that would wipe them.
@@ -339,7 +349,7 @@ public class RegenerationManager {
                 log.warning("Another save of regeneration processes is still running, skipping this one.");
                 return;
             }
-            // The write is atomic either way, the worst case is the older snapshot landing last.
+            // The snapshot numbers below keep the stuck one from landing after this one.
             log.severe("Another save of regeneration processes is still running after " + SAVE_LOCK_TIMEOUT_SECONDS + "s, writing the final one anyway.");
         }
 
@@ -352,10 +362,23 @@ public class RegenerationManager {
             // Cleared before the snapshot, a change made while writing marks the cache dirty again.
             dirty.set(false);
 
+            final long number = snapshotNumber.incrementAndGet();
             final JsonArray snapshot = snapshot(System.currentTimeMillis());
+            byte[] json = plugin.getGsonHelper().getGson().toJson(snapshot).getBytes(StandardCharsets.UTF_8);
 
             // Atomic, a crash or a failed write leaves the previous file intact.
-            AtomicFiles.write(dataFile.toPath(), plugin.getGsonHelper().getGson().toJson(snapshot).getBytes(StandardCharsets.UTF_8));
+            try (AtomicFiles.PendingWrite pending = AtomicFiles.prepare(dataFile.toPath(), json)) {
+                synchronized (commitLock) {
+                    // Only possible when the final save gave up waiting for the lock: it's newer, keep it.
+                    if (number < committedSnapshot) {
+                        log.warning("A newer save of regeneration processes was written first, dropping this one.");
+                        return;
+                    }
+
+                    pending.commit();
+                    committedSnapshot = number;
+                }
+            }
 
             log.fine(() -> "Saved " + snapshot.size() + " regeneration processes..");
         } catch (Exception e) {
@@ -422,12 +445,13 @@ public class RegenerationManager {
         return plugin.getGsonHelper().loadListAsync(plugin.getDataFolder().getPath() + "/Data.json", RegenerationProcess.class);
     }
 
-    // One process failing to start must not keep the others from starting.
+    // One process failing to start must not keep the others from starting, nor the save gate closed. A LinkageError
+    // comes from a broken or missing plugin (its world or material classes).
     private void startAllLoaded(@NotNull List<RegenerationProcess> loadedProcesses) {
         for (RegenerationProcess loadedProcess : loadedProcesses) {
             try {
                 startLoaded(loadedProcess);
-            } catch (Exception e) {
+            } catch (Exception | LinkageError e) {
                 log.log(Level.SEVERE, "Could not start stored regeneration process " + loadedProcess + ": " + e.getMessage(), e);
             }
         }
@@ -445,6 +469,16 @@ public class RegenerationManager {
     }
 
     public void load() {
+        // A fresh start. Also when the same instance is enabled again (PlugMan and the like): the final save of the
+        // previous run closed saving, and its stopped processes are in Data.json, they're loaded from there again.
+        this.closed = false;
+        this.loaded = false;
+        this.retry = false;
+        this.cache.clear();
+        this.dirty.set(false);
+        // A change save cancelled with the plugin's tasks never cleared its flag.
+        this.changeSaveScheduled.set(false);
+
         // Presets using materials of other plugins only load once the server is done loading
         // (PresetManager#reattemptLoad). Starting the stored processes before that would drop the ones using them, and
         // the next save would delete them for good. They're loaded by reattemptLoad() then, nothing is saved until.
