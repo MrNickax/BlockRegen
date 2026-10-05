@@ -10,6 +10,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.lang.reflect.Type;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousFileChannel;
@@ -120,6 +121,10 @@ public class GsonHelper {
 
     /**
      * Asynchronously load a List<T> from a file.
+     * <p>
+     * A file that can't be read or parsed (torn by a crash during a write by an older version, edited by hand...) is
+     * moved aside as {@code <name>.corrupt-<timestamp>} and loads as null. Otherwise, the next save would overwrite it
+     * and its contents would be lost for good.
      *
      * @return CompletableFuture with the resulting list or null.
      */
@@ -128,18 +133,36 @@ public class GsonHelper {
         Path path = Paths.get(dataPath);
 
         if (!Files.exists(path))
-            return new CompletableFuture<>();
+            return CompletableFuture.completedFuture(null);
 
         final Type type = mapList(innerClazz);
 
-        return read(path).thenApplyAsync(buffer -> {
-            String output = new String(buffer.array(), StandardCharsets.UTF_8).trim();
+        return CompletableFuture.supplyAsync(() -> {
+            String output;
+            try {
+                output = new String(Files.readAllBytes(path), StandardCharsets.UTF_8).trim();
+            } catch (IOException e) {
+                keepAside(path, e);
+                return null;
+            }
 
             if (Strings.isNullOrEmpty(output))
                 return null;
 
-            return gson.fromJson(output, type);
+            try {
+                return gson.fromJson(output, type);
+            } catch (RuntimeException e) {
+                keepAside(path, e);
+                return null;
+            }
         });
+    }
+
+    private void keepAside(@NotNull Path path, @NotNull Exception cause) {
+        Path aside = AtomicFiles.keepAside(path);
+        log.log(Level.SEVERE, "Could not load " + path + ", it's damaged or unreadable: " + cause.getMessage()
+                + (aside == null ? ". It could not be kept aside and will be overwritten by the next save."
+                : ". Kept it as " + aside + " for a manual recovery, continuing without its contents."), cause);
     }
 
     /**
@@ -149,16 +172,25 @@ public class GsonHelper {
      */
     @NotNull
     public <T> CompletableFuture<Void> save(@NotNull final T input, @NotNull final Path dataPath) {
-        final Type type = map(input.getClass());
-
         return CompletableFuture.runAsync(() -> {
-            String jsonString = gson.toJson(input, type).trim();
-
             try {
-                Files.write(dataPath, jsonString.getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+                saveNow(input, dataPath);
             } catch (IOException e) {
-                throw new RuntimeException(e);
+                throw new UncheckedIOException(e);
             }
         });
+    }
+
+    /**
+     * Save data to json on the calling thread.
+     * <p>
+     * The file is replaced atomically, a crash during the save leaves the previous version intact.
+     */
+    public <T> void saveNow(@NotNull final T input, @NotNull final Path dataPath) throws IOException {
+        final Type type = map(input.getClass());
+
+        String jsonString = gson.toJson(input, type).trim();
+
+        AtomicFiles.write(dataPath, jsonString.getBytes(StandardCharsets.UTF_8));
     }
 }

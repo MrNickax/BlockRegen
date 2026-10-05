@@ -9,6 +9,7 @@ import nl.aurorion.blockregen.material.BlockRegenMaterial;
 import nl.aurorion.blockregen.preset.BlockPreset;
 import nl.aurorion.blockregen.regeneration.struct.RegenerationProcess;
 import nl.aurorion.blockregen.region.struct.RegenerationArea;
+import nl.aurorion.blockregen.util.AtomicFiles;
 import org.bukkit.Bukkit;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
@@ -17,8 +18,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -227,14 +227,11 @@ public class RegenerationManager {
 
         if (cache.isEmpty()) {
             log.fine(() -> "No processes to save.");
+            // Atomic, a failed write leaves the previous file intact instead of a deleted or truncated one.
             try {
-                Files.write(dataFile.toPath(), "[]\n".getBytes(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+                AtomicFiles.write(dataFile.toPath(), "[]\n".getBytes(StandardCharsets.UTF_8));
             } catch (IOException e) {
-                log.severe(() -> "Failed to create empty Data.json.");
-
-                // Try to force delete.
-                //noinspection ResultOfMethodCallIgnored
-                dataFile.delete();
+                log.log(Level.SEVERE, "Failed to create empty Data.json: " + e.getMessage(), e);
             }
             return;
         }
