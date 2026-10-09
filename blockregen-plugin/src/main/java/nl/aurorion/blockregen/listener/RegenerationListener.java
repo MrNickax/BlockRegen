@@ -27,6 +27,11 @@ public class RegenerationListener implements Listener {
         this.plugin = plugin;
     }
 
+    // The server version can't change while it runs, so this is worked out once, on first use.
+    private static final class ServerVersion {
+        private static final boolean ABOVE_1_8 = BukkitVersions.isCurrentAbove("1.8", false);
+    }
+
     // Block trampling
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInteract(PlayerInteractEvent event) {
@@ -78,7 +83,7 @@ public class RegenerationListener implements Listener {
             @Override
             public void cancelDrops() {
                 // We're dropping the items ourselves.
-                if (BukkitVersions.isCurrentAbove("1.8", false)) {
+                if (ServerVersion.ABOVE_1_8) {
                     event.setDropItems(false);
                     log.fine(() -> "Cancelled BlockDropItemEvent");
                 }

@@ -20,6 +20,7 @@ import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
+import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.ExperienceOrb;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
@@ -39,8 +40,54 @@ public class RegenerationEventHandlerImpl implements RegenerationEventHandler {
 
     private final BlockRegenPlugin plugin;
 
+    private volatile Settings settings;
+
     public RegenerationEventHandlerImpl(BlockRegenPlugin plugin) {
         this.plugin = plugin;
+    }
+
+    // Every load of the settings file replaces the configuration object, so the values read from the previous one
+    // are dropped as soon as it's no longer the current configuration, on whichever path it was reloaded.
+    private Settings settings() {
+        FileConfiguration config = plugin.getConfig();
+        Settings current = this.settings;
+        if (current == null || current.config != config) {
+            current = new Settings(config);
+            this.settings = current;
+        }
+        return current;
+    }
+
+    // The settings read on every break, so they aren't looked up in the configuration each time.
+    private static final class Settings {
+        private final FileConfiguration config;
+
+        private final boolean bypassInCreative;
+        private final boolean useRegions;
+        private final Set<String> worldsEnabled;
+        private final boolean disableOtherBreak;
+
+        private final boolean townySupport;
+        private final boolean griefPreventionSupport;
+        private final boolean worldGuardSupport;
+        private final boolean residenceSupport;
+
+        private Settings(FileConfiguration config) {
+            this.config = config;
+            this.bypassInCreative = config.getBoolean("Bypass-In-Creative", false);
+            this.useRegions = config.getBoolean("Use-Regions", false);
+            this.worldsEnabled = new HashSet<>(config.getStringList("Worlds-Enabled"));
+            this.disableOtherBreak = config.getBoolean("Disable-Other-Break", false);
+            this.townySupport = config.getBoolean("Towny-Support", true);
+            this.griefPreventionSupport = config.getBoolean("GriefPrevention-Support", true);
+            this.worldGuardSupport = config.getBoolean("WorldGuard-Support", true);
+            this.residenceSupport = config.getBoolean("Residence-Support", true);
+        }
+    }
+
+    // The server version can't change while it runs, so this is worked out once, on first use.
+    private static final class ServerVersion {
+        private static final boolean AT_MOST_1_8 = BukkitVersions.isCurrentBelow("1.8", true);
     }
 
     @Override
@@ -85,10 +132,12 @@ public class RegenerationEventHandlerImpl implements RegenerationEventHandler {
 
         World world = block.getWorld();
 
-        boolean useRegions = plugin.getConfig().getBoolean("Use-Regions", false);
+        Settings cached = settings();
+
+        boolean useRegions = cached.useRegions;
         RegenerationArea area = useRegions ? plugin.getRegionManager().getArea(block) : null;
 
-        boolean isInWorld = plugin.getConfig().getStringList("Worlds-Enabled").contains(world.getName());
+        boolean isInWorld = cached.worldsEnabled.contains(world.getName());
         boolean isInArea = area != null;
 
         boolean isInZone = useRegions ? isInArea : isInWorld;
@@ -125,7 +174,7 @@ public class RegenerationEventHandlerImpl implements RegenerationEventHandler {
             if (useRegions && area.getDisableOtherBreak() != null) {
                 disableOtherBreak = area.getDisableOtherBreak();
             } else {
-                disableOtherBreak = plugin.getConfig().getBoolean("Disable-Other-Break", false);
+                disableOtherBreak = settings().disableOtherBreak;
             }
 
             if (disableOtherBreak) {
@@ -240,11 +289,12 @@ public class RegenerationEventHandlerImpl implements RegenerationEventHandler {
     // If any of them are protecting this block, allow them to handle this and do nothing.
     // We do this just in case some protection plugins fire after us and the event wouldn't be canceled.
     private boolean checkProtection(Player player, Block block, RegenerationEventType type) {
+        Settings cached = settings();
 
         Optional<TownyProvider> townyProvider = plugin.getCompatibilityManager().getTowny().get();
 
         // Towny
-        if (plugin.getConfig().getBoolean("Towny-Support", true) && townyProvider.isPresent()) {
+        if (cached.townySupport && townyProvider.isPresent()) {
             if (!townyProvider.map((provider) -> provider.canBreak(block, player)).get()) {
                 return true;
             }
@@ -253,14 +303,14 @@ public class RegenerationEventHandlerImpl implements RegenerationEventHandler {
         Optional<GriefPreventionProvider> griefPreventionProvider = plugin.getCompatibilityManager().getGriefPrevention().get();
 
         // Grief Prevention
-        if (plugin.getConfig().getBoolean("GriefPrevention-Support", true) && griefPreventionProvider.isPresent()) {
+        if (cached.griefPreventionSupport && griefPreventionProvider.isPresent()) {
             if (!griefPreventionProvider.map(provider -> provider.canBreak(block, player)).get()) {
                 return true;
             }
         }
 
         // WorldGuard
-        if (plugin.getConfig().getBoolean("WorldGuard-Support", true)
+        if (cached.worldGuardSupport
                 && plugin.getVersionManager().getWorldGuardProvider() != null) {
 
             if (type == RegenerationEventType.BLOCK_BREAK || type == RegenerationEventType.BUCKET_FILL) {
@@ -279,7 +329,7 @@ public class RegenerationEventHandlerImpl implements RegenerationEventHandler {
         Optional<ResidenceProvider> residenceProvider = plugin.getCompatibilityManager().getResidence().get();
 
         // Residence
-        if (plugin.getConfig().getBoolean("Residence-Support", true) && residenceProvider.isPresent()) {
+        if (cached.residenceSupport && residenceProvider.isPresent()) {
             if (!residenceProvider.map((provider) -> provider.canBreak(block, player, type)).get()) {
                 return true;
             }
@@ -291,7 +341,7 @@ public class RegenerationEventHandlerImpl implements RegenerationEventHandler {
     @Override
     public boolean hasBypass(@NotNull Player player) {
         return plugin.getRegenerationManager().hasBypass(player)
-                || (plugin.getConfig().getBoolean("Bypass-In-Creative", false)
+                || (settings().bypassInCreative
                 && player.getGameMode() == GameMode.CREATIVE);
     }
 
@@ -381,7 +431,7 @@ public class RegenerationEventHandlerImpl implements RegenerationEventHandler {
         List<ItemStack> vanillaDrops = new ArrayList<>(block.getDrops(plugin.getVersionManager().getMethods().getItemInMainHand(player)));
 
         // Cancels item drops below 1.8.
-        if (BukkitVersions.isCurrentBelow("1.8", true)) {
+        if (ServerVersion.AT_MOST_1_8) {
             block.setType(Material.AIR);
         }
 
