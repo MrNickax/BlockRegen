@@ -12,6 +12,7 @@ import nl.aurorion.blockregen.configuration.LoadResult;
 import nl.aurorion.blockregen.drop.ItemProvider;
 import nl.aurorion.blockregen.event.struct.EventBossBar;
 import nl.aurorion.blockregen.event.struct.PresetEvent;
+import nl.aurorion.blockregen.material.BlockTypeLookup;
 import nl.aurorion.blockregen.preset.condition.ConditionRelation;
 import nl.aurorion.blockregen.preset.condition.Conditions;
 import nl.aurorion.blockregen.preset.condition.GenericConditionProvider;
@@ -56,8 +57,10 @@ public class PresetManager {
 
     @Nullable
     public BlockPreset getPreset(@NotNull Block block) {
+        // The block's type is looked up once for all presets, not once per preset.
+        BlockTypeLookup type = new BlockTypeLookup(plugin, block);
         for (BlockPreset preset : this.presets.values()) {
-            if (preset.getTargetMaterial().matches(block)) {
+            if (preset.getTargetMaterial().matches(block, type)) {
                 return preset;
             }
         }
@@ -70,8 +73,9 @@ public class PresetManager {
             return getPreset(block);
         }
 
+        BlockTypeLookup type = new BlockTypeLookup(plugin, block);
         for (BlockPreset preset : this.presets.values()) {
-            if (preset.getTargetMaterial().matches(block) && region.hasPreset(preset.getName())) {
+            if (preset.getTargetMaterial().matches(block, type) && region.hasPreset(preset.getName())) {
                 return preset;
             }
         }

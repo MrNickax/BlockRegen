@@ -2,6 +2,7 @@ package nl.aurorion.blockregen.preset.material;
 
 import lombok.Getter;
 import nl.aurorion.blockregen.material.BlockRegenMaterial;
+import nl.aurorion.blockregen.material.BlockTypeLookup;
 import org.bukkit.block.Block;
 import org.jetbrains.annotations.NotNull;
 
@@ -37,6 +38,16 @@ public class TargetMaterial {
     public boolean matches(@NotNull Block block) {
         for (BlockRegenMaterial targetMaterial : this.materials) {
             if (targetMaterial.check(block)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Same as #matches(Block), sharing one type lookup with other checks against the same block.
+    public boolean matches(@NotNull Block block, @NotNull BlockTypeLookup type) {
+        for (BlockRegenMaterial targetMaterial : this.materials) {
+            if (targetMaterial.check(block, type)) {
                 return true;
             }
         }

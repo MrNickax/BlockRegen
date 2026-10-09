@@ -4,6 +4,7 @@ import com.cryptomorin.xseries.XMaterial;
 import lombok.Getter;
 import nl.aurorion.blockregen.BlockRegenPlugin;
 import nl.aurorion.blockregen.material.BlockRegenMaterial;
+import nl.aurorion.blockregen.material.BlockTypeLookup;
 import nl.aurorion.blockregen.util.Blocks;
 import nl.aurorion.blockregen.version.api.NodeData;
 import org.bukkit.block.Block;
@@ -33,6 +34,17 @@ public class MinecraftMaterial implements BlockRegenMaterial {
     @Override
     public boolean check(Block block) {
         XMaterial xMaterial = this.plugin.getBlockType(block);
+        return xMaterial == this.material && (this.nodeData == null || this.nodeData.matches(block));
+    }
+
+    @Override
+    public boolean check(Block block, BlockTypeLookup type) {
+        // The shared lookup stands in for this.plugin.getBlockType(block) only when it goes through the same plugin,
+        // and a subclass keeps whatever its own check(Block) does.
+        if (getClass() != MinecraftMaterial.class || !type.isFor(this.plugin)) {
+            return check(block);
+        }
+        XMaterial xMaterial = type.get();
         return xMaterial == this.material && (this.nodeData == null || this.nodeData.matches(block));
     }
 

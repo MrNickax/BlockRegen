@@ -12,6 +12,13 @@ public interface BlockRegenMaterial {
     boolean check(Block block);
 
     /**
+     * Same as {@link #check(Block)}, for a series of checks against the same block that share one type lookup.
+     */
+    default boolean check(Block block, BlockTypeLookup type) {
+        return check(block);
+    }
+
+    /**
      * Set the type of the block and apply data.
      */
     default void place(Block block) {
