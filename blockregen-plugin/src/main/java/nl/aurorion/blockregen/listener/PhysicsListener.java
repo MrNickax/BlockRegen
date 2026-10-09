@@ -39,6 +39,14 @@ public class PhysicsListener implements Listener {
             return;
         }
 
+        // Only deny physics if the update is caused by a regenerating block.
+        // Checked before the zone: both checks only return early, and this one rules out nearly every update with a
+        // single map lookup instead of a scan of all areas.
+        RegenerationProcess process = plugin.getRegenerationManager().getProcess(event.getSourceBlock());
+        if (process == null || !process.getPreset().isDisablePhysics()) {
+            return;
+        }
+
         Block block = event.getBlock();
         World world = block.getWorld();
 
@@ -51,12 +59,6 @@ public class PhysicsListener implements Listener {
         boolean isInZone = useRegions ? isInRegion : isInWorld;
 
         if (!isInZone) {
-            return;
-        }
-
-        // Only deny physics if the update is caused by a regenerating block.
-        RegenerationProcess process = plugin.getRegenerationManager().getProcess(event.getSourceBlock());
-        if (process == null || !process.getPreset().isDisablePhysics()) {
             return;
         }
         event.setCancelled(true);
